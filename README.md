@@ -6,6 +6,7 @@ Each folder has a description file that provides additional information about th
 
 If you are having problems with the code, feel free to create an [Issue](https://github.com/alexisrsantos/PA_life_expectancy_ADA/issues) and I will work on it.
 
+***
 This repository is managed by [Dr. Alexis R. Santos](sites.psu.edu/alexisrsantos) (ars39@psu.edu) and is part of the Policy Outreach initiated within the [Administrative Data Accelerator](accelerator.psu.edu). 
 
 Within the Administrative Data Accelerator, I work as a Demography Data Fellow. 
