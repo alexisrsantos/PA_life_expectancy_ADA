@@ -1,0 +1,472 @@
+---
+title: PA Socioeconomic Conditions
+author: "Dr. Alexis R. Santos"
+date: "March 9, 2018"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Overview
+This code will produce socioeconomic conditions for PA. 
+
+#Accessing county level data for empirical comparisons
+In this section, we access demographic variables required to replicate the regression analyses presented in the article by Lichter, D. T. and McLaughlin, D. K. (1995). Data in the ACS will allow us to obtain the following variables:
+
+* Demographic Compositon with ACS table
+  + Percent black: B03002
+  + Percent Latino (Hispanic): B03002
+  + Percent aged less than 18: B01001
+  + Percent aged 65 or older:  B01001
+  + Percent immobile: B07003 now this is measured as one-year, not 5-years. 
+  + Percent less than High School Diploma: B15003
+  + South: Region
+  
+* Industrial Structure with ACS table 
+  + Percent manufacturing: C24050
+  + Percent extractive: C24050
+  + Percent service: C24050
+  + Percent government (Public Administration): C24050
+
+* Employment with ACS table in parenthesis
+  + Percent unemployed: B12006
+  + Percent females employed: B12006
+
+* Family Structure with ACS table in parenthesis
+  + Percent female headed households: B25011.
+  
+The following lines of code create the variables we will request using the "get_acs" function. Careful attention must be placed on the number of individuals in our group of interest and in the denominator for the rates we are calculating. Please, review the variables we will get from the Census API and corresponding denominators (_001E). 
+
+```{r create the object for variables}
+
+census_api_key("Your Census Key Here",install=TRUE)
+
+paper_variables<-c("B03002_004E","B03002_012E","B03002_001E","B01001_003E",
+                   "B01001_004E","B01001_005E","B01001_006E","B01001_027E",
+                   "B01001_028E","B01001_029E","B01001_030E","B01001_001E",
+                   "B01001_020E","B01001_021E","B01001_022E","B01001_023E",
+                   "B01001_024E","B01001_025E","B01001_044E","B01001_045E",
+                   "B01001_046E","B01001_047E","B01001_048E","B01001_049E",
+                   "B15003_002E","B15003_003E","B15003_004E","B15003_005E",
+                   "B15003_006E","B15003_007E","B15003_008E","B15003_009E",
+                   "B15003_010E","B15003_011E","B15003_012E","B15003_013E",
+                   "B15003_014E","B15003_015E","B15003_016E","B15003_001E",
+                   "C24050_004E","C24050_002E","C24050_029E","C24050_001E",
+                   "C24050_014E","B12006_006E","B12006_011E","B12006_017E",
+                   "B12006_022E","B12006_029E","B12006_033E","B12006_039E",
+                   "B12006_044E","B12006_050E","B12006_055E","B12006_004E",
+                   "B12006_009E","B12006_015E","B12006_020E","B12006_026E",
+                   "B12006_031E","B12006_037E","B12006_042E","B12006_048E",
+                   "B12006_053E","B12006_010E","B12006_008E","B25011_013E",
+                   "B25011_037E","B25011_001E","B07003_004E","B07003_007E",
+                   "B07003_001E","B17001_002E","B17001_001E","B17005_006E",
+                   "B17005_011E","B17005_017E","B17005_022E","B17005_001E",
+                   "B12006_021E","B12006_032E","B12006_043E","B12006_054E",
+                   "B12006_019E","B12006_030E","B12006_041E","B12006_052E","B19083_001E","B25099_001E",
+                   "B25077_001E","B27010_001E","B27010_017E","B27010_033E","B27010_050E","B27010_066E")
+
+#library(acs)
+library(tidycensus)
+library(tidyverse)
+library(tigris)
+library(sf)
+
+#Get ACS data for county level, PA, and the 2015 ACS release
+county_data<-get_acs(geography="county",STATE="PA",variables=paper_variables,year=2015, output="wide") 
+
+#See the variables in the dataset
+objects(county_data)
+
+county_data<-subset(county_data,GEOID>42000) #Only keep information for PA (safety check)
+county_data<-subset(county_data,GEOID<42999) #Only keep information for PA (safety check)
+
+library(readxl) #With this library we import the Urban Rural Codes for 2013
+ruralurbancodes2013 <- read_excel("PATH HERE/ruralurbancodes2013.xls")
+
+ruralurbancodes2013$GEOID<-as.numeric(ruralurbancodes2013$FIPS) #Make FIPS a numeric variable
+
+ruralurbancodes2013<-subset(ruralurbancodes2013,GEOID>42000) #Only keep information for PA
+ruralurbancodes2013<-subset(ruralurbancodes2013,GEOID<42999) #Only keep information for PA
+```
+
+##Variables considered
+
+The following variables will be considered. 
+
+* Poverty Rate
+* Percent non-Hispanic Black
+* Percent Hispanic
+* Percent of Adults without a High School Diploma
+* Unemployment Rate
+* Percent Female Headed Households
+* Percent 65 years and over
+* Gini Index of Income Inequality
+* Poverty Segregation Index (Interaction Index between poor and non-poor)
+* Percent of the population without health insurance
+* Median Household Income
+* Median House Value (for houses occupied by owner)
+
+In the following line we will calculate the variables to be considered using R. 
+
+```{r calculate variables}
+
+attach(county_data) #Will make the data part of R, and then will send it back to the original database. 
+#This does not requires us to write "paper_data" everytime in front of each variable. 
+#Note that we are creating the variables inside "paper_data"
+
+county_data$pov_percent<-B17001_002E/B17001_001E #Calculates the percent of the population below the poverty level
+
+county_data$pct_black<-B03002_004E/B03002_001E*100 #Calculates the percent non-Hispanic black
+
+county_data$pct_hispanic<-B03002_012E/B03002_001E*100
+
+county_data$pct_under18years<-(B01001_003E+B01001_004E+B01001_005E+B01001_006E+B01001_027E+B01001_028E+B01001_029E+B01001_030E)/B01001_001E*100 #Calculates the percent of the population under 18 years (0-17 years old)
+  
+county_data$pct_65andolder<-(B01001_020E+B01001_021E+B01001_022E+B01001_023E+B01001_024E+B01001_025E+B01001_044E+B01001_045E+B01001_046E+
+                            B01001_047E+B01001_048E+B01001_049E)/B01001_001E*100
+#Calculates the percent of the population that is 65 years and older
+
+county_data$pct_immobile_1yr<-(B07003_004E+B07003_007E)/B07003_001E*100 #Calculates percent immbole 1 year ago
+  
+county_data$percent_lessthanHS<-(B15003_002E+B15003_003E+B15003_004E+B15003_005E+B15003_006E+B15003_007E+B15003_008E+B15003_009E+B15003_010E+B15003_011E+B15003_012E+B15003_013E+B15003_014E+B15003_015E+B15003_016E)/B15003_001E*100
+#Calculates the percent of the population over 25 years without a high school education 
+
+county_data$pct_manufacturing<-C24050_004E/C24050_001E*100 #Population working in Manufacturing Sector 
+  
+county_data$pct_extractive<-C24050_002E/C24050_001E*100    #Population working in Agriculture, Forestry, Fishing, and Mining
+  
+county_data$pct_service<-C24050_029E/C24050_001E*100       #Population woking in the Service Sector
+  
+county_data$pct_government<-C24050_014E/C24050_001E*100    #Population working in Public Administration (Government)
+
+county_data$pct_female_headed_hh<-(B25011_013E+B25011_037E)/B25011_001E*100 #Female Headed Households
+
+county_data$pct_fem_employed<-(B12006_010E+B12006_021E+B12006_032E+B12006_043E+B12006_054E)/(B12006_008E+B12006_019E+B12006_030E+B12006_041E+B12006_052E)*100 #Percent of females employed
+
+county_data$pct_unemployed<-(B17005_006E+B17005_011E+B17005_017E+B17005_022E)/B17005_001E*100 #Percent unemployed
+
+county_data$gini<-B19083_001E
+
+life_exp<-read.csv("PATH HERE/Life_Expectancy_PA_data.csv") #Read in the Life Expectancy File
+
+life_exp$GEOID<-life_exp$FIPS
+
+life_exp$GEOID<-as.character(life_exp$GEOID)
+
+full_data<-merge(life_exp,county_data,by="GEOID") # Merge county data with life expectancy data into full_data
+
+ruralurbancodes2013$GEOID<-as.character(ruralurbancodes2013$GEOID) #Make FIPS in RUCC file a character
+
+ruralurbancodes2013$nonmetro<-ifelse(ruralurbancodes2013$RUCC_2013>3,1,0) #Value above 3 is non-metro (nonmetro=1), those below are metro (nonmetro=0)
+
+full_data<-merge(full_data,ruralurbancodes2013,by="GEOID") #Include rural urban codes in full_data
+
+table(full_data$nonmetro) #Cross tabulation of metro/non-metro
+
+social_capital<-read_excel("PATH HERE/Social_Capital_2014.xlsx") #Reads in the social capital index file
+
+social_capital<-subset(social_capital,FIPS>42000) #Keeps only PA variables
+social_capital<-subset(social_capital,FIPS<42999) #Keeps only PA variables
+
+social_capital$GEOID<-as.character(social_capital$FIPS) #Renames FIPS as GEOID for merge
+
+full_data<-merge(full_data,social_capital,by="GEOID") #Merge social capital to the analytic dataset
+
+full_data$medhhincome<-full_data$B25099_001E #Rename
+
+full_data$medhousevalue<-full_data$B25077_001E #Rename
+
+full_data$noinsurance<-(B27010_017E+B27010_033E+B27010_050E+B27010_066E)/B27010_001E*100 #No Health Insurance
+
+density<-read.csv("PATH HERE/Land_Area.csv") #Land Area for Population Density
+
+full_data<-merge(full_data,density,by="GEOID") #Merges the Land Area to full_data
+
+model2<-lm(Diff_average_14~nonmetro+pov_percent+pct_black+pct_hispanic+pct_under18years+pct_65andolder+percent_lessthanHS+pct_manufacturing+pct_extractive+pct_service+pct_government+pct_unemployed+pct_female_headed_hh,data=full_data)
+
+model3<-lm(Diff_average_14~pov_percent+pct_black+pct_hispanic+pct_under18years+pct_65andolder+percent_lessthanHS+pct_unemployed+pct_female_headed_hh,data=full_data)
+
+model4<-lm(Life_exp_14~pov_percent+pct_black+pct_hispanic+pct_under18years+pct_65andolder+percent_lessthanHS+pct_unemployed+pct_female_headed_hh,data=full_data)
+
+f<-ggplot(full_data,aes(pov_percent,Diff_average_14))
+f+geom_jitter()
+
+f<-ggplot(full_data,aes(percent_lessthanHS,Diff_average_14))
+f+geom_jitter()
+
+
+f+geom_jitter()
+
+f<-ggplot(full_data,aes(gini,Diff_average_14))
+f+geom_jitter()
+```
+
+#Correlations
+
+```{r correlations}
+z<-ggplot(full_data, aes(x=gini, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+z+labs(title="Gini Index of Income Inequality and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Poverty Rate",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$gini,y=full_data$Diff_average_14,method='pearson')
+corr
+
+a<-ggplot(full_data, aes(x=pov_percent, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+a+labs(title="Poverty rate and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Poverty Rate",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$pov_percent,y=full_data$Diff_average_14,method='pearson')
+corr
+
+aa<-ggplot(full_data, aes(x=pct_black, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+aa+labs(title="Percent Black and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent Black",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$pct_black,y=full_data$Diff_average_14,method='pearson')
+corr
+
+dummy<-subset(full_data,pct_black<30)
+
+aa<-ggplot(dummy, aes(x=pct_black, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+aa+labs(title="Percent Black and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent Black",y="Difference in life expectancy (diff=county-state level)",caption="Note: Removing outlier")
+
+corr<-cor.test(x=dummy$pct_black,y=dummy$Diff_average_14,method='pearson')
+corr
+
+b<-ggplot(full_data, aes(x=sk2014, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+b+labs(title="Social Capital and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Social Capital Index",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$sk2014,y=full_data$Diff_average_14,method='pearson')
+corr
+
+c<-ggplot(full_data, aes(x=log(medhhincome), y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+c+labs(title="Median Household Income and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Median Household Income (log scale)",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=log(full_data$medhhincome),y=full_data$Diff_average_14,method='pearson')
+corr
+
+d<-ggplot(full_data, aes(x=log(medhousevalue), y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+d+labs(title="Median House Value (Owner-occupied) and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Median Household Value (log scale)",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=log(full_data$medhousevalue),y=full_data$Diff_average_14,method='pearson')
+corr
+```
+
+
+```{r segregation}
+#Measuring as Interaction index
+#get total and poor/nonpoor
+
+pov_var<-c("B17001_001E","B17001_002E","B17001_031E")
+
+tract<-get_acs(geography="tract",state ="42",variables=pov_var,year=2015, output="wide") 
+
+tract$total<-tract$B17001_001E
+
+tract$poor<-tract$B17001_002E
+
+tract$nonpoor<-tract$B17001_031E
+
+tract$cofips<-substr(tract$GEOID,1,5)
+
+#County total
+
+co_total<-tapply(tract$total, tract$cofips, sum)
+co_total<-data.frame(cofips=names(unlist(co_total)), pop=unlist(co_total))
+
+#POOR
+co_poor<-tapply(tract$poor, tract$cofips, sum)
+co_poor<-data.frame(cofips=names(unlist(co_poor)), pop=unlist(co_poor))
+
+#non-poor
+co_nonpoor<-tapply(tract$nonpoor, tract$cofips, sum)
+co_nonpoor<-data.frame(cofips=names(unlist(co_nonpoor)), pop=unlist(co_nonpoor))
+
+c_ppoor<-co_poor$pop/co_total$pop
+c_pnonpoor<-co_nonpoor$pop/co_total$pop
+
+#Poverty Segregation
+pov_seg<-data.frame(cofips=co_total$cofips, co_total=co_total$pop, co_poor_total=co_poor$pop, co_nonpoor_total=co_nonpoor$pop, c_poor=c_ppoor, c_pnonpoor=c_pnonpoor)
+
+merged<-merge(x=tract,y=pov_seg, by="cofips", all.x=T )
+
+#The interaction index measures the exposure of minority group members to members of the majority group as the 
+# minority-weighted average of the majority proportion of the population in each areal unit. The isolation index
+# measures "the extent to which minority members are exposed only to one another," and is computed as the
+# minority-weighted average of the minority proportion in each area.  
+
+merged$int.wb<-(merged$poor/merged$co_poor_total * merged$nonpoor/merged$total)
+
+int.wb.tr<-tapply(merged$int.wb, merged$cofips, sum, na.rm=T)
+
+county_seg<-data.frame(GEOID=names(unlist(int.wb.tr)),seg=unlist(int.wb.tr))
+```
+
+```{r merge}
+full_data<-merge(full_data,county_seg,by="GEOID") #Merge with Segregation Index
+
+e<-ggplot(full_data, aes(x=seg, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+e+labs(title="Poor/Non-Poor Segregation and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Poverty Segregation",y="Difference in life expectancy (diff=county-state level)",caption="Interaction Index is used to measure segregation")
+
+corr<-cor.test(x=log(full_data$seg),y=full_data$Diff_average_14,method='pearson')
+corr
+
+dummy2<-subset(full_data,seg>0.70)
+
+ee<-ggplot(dummy2, aes(x=seg, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+ee+labs(title="Poor/Non-Poor Segregation and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Poverty Segregation",y="Difference in life expectancy (diff=county-state level)",caption="Interaction Index is used to measure segregation and removing outliers (low end)")
+
+corr<-cor.test(x=log(dummy2$seg),y=dummy2$Diff_average_14,method='pearson')
+corr
+
+f<-ggplot(full_data, aes(x=noinsurance, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+f+labs(title="No-Health Insurance and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="No Insurance Rate",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$noinsurance,y=full_data$Diff_average_14,method='pearson')
+corr
+
+g<-ggplot(full_data, aes(x=pct_unemployed, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+
+g+labs(title="Percent Unemployed and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent Unemployed",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$pct_unemployed,y=full_data$Diff_average_14,method='pearson')
+corr
+
+h<-ggplot(full_data, aes(x=pct_female_headed_hh, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+h+labs(title="Female Headed Households and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent Female Headed Households",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$pct_female_headed_hh,y=full_data$Diff_average_14,method='pearson')
+corr
+  
+i<-ggplot(full_data, aes(x=pct_65andolder, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+i+labs(title="Percent of the Population 65 + and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent of the Population 65 +",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$pct_65andolder,y=full_data$Diff_average_14,method='pearson')
+corr
+
+j<-ggplot(full_data, aes(x=percent_lessthanHS, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+j+labs(title="% Adult Population without High School Diploma and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent of the Population 65 +",y="Difference in life expectancy (diff=county-state level)")
+
+
+corr<-cor.test(x=full_data$percent_lessthanHS,y=full_data$Diff_average_14,method='pearson')
+corr
+
+k<-ggplot(full_data, aes(x=pct_black, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+k+labs(title="% Non-Hispanic Black and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent of the Population non-Hispanic Black",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$pct_black,y=full_data$Diff_average_14,method='pearson')
+corr
+
+l<-ggplot(full_data, aes(x=pct_hispanic, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+l+labs(title="% Hispanic and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent of the Population Hispanic",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$pct_hispanic,y=full_data$Diff_average_14,method='pearson')
+corr
+
+dummy4<-subset(full_data,pct_hispanic<15)
+
+m<-ggplot(dummy4, aes(x=pct_hispanic, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+m+labs(title="% Hispanic and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Percent of the Population Hispanic",y="Difference in life expectancy (diff=county-state level)",caption="Removing outliers for % Hispanic population")
+
+corr<-cor.test(x=dummy4$pct_hispanic,y=dummy4$Diff_average_14,method='pearson')
+corr
+
+lm(full_data$Diff_average_14~full_data$nonmetro)
+
+t.test(full_data$Diff_average_14~full_data$nonmetro)
+
+aov(formula =full_data$Diff_average_14~full_data$nonmetro)
+
+n<-ggplot(full_data, aes(x=Density, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+n+labs(title="Population Density and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Population Density",y="Difference in life expectancy (diff=county-state level)")
+
+corr<-cor.test(x=full_data$Density,y=full_data$Diff_average_14,method='pearson')
+corr
+
+dummy5<-subset(full_data,Density<3000)
+
+o<-ggplot(dummy5, aes(x=Density, y=Diff_average_14)) + 
+  geom_point(color='blue') + 
+  geom_smooth(method=lm, se=FALSE, fullrange=TRUE)
+
+o+labs(title="Population Density and life expectancy differences from state level",subtitle="Average life expectancy for PA was 78.82 years",x="Population Density",y="Difference in life expectancy (diff=county-state level)",caption="Removing two outliers")
+
+corr<-cor.test(x=dummy5$Density,y=dummy5$Diff_average_14,method='pearson')
+corr
+```
+
+##Maps
+The following code produces maps
+
+```{r map}
+map_pa<-get_decennial(geography = "county", state="PA",year=2010 ,variables="P0130001",output ="wide",geometry = TRUE) #Requests the map with total population
+
+map_pa %>%
+  ggplot()+  geom_sf() #Produces a map 
+
+map_pa2<-left_join(x = map_pa, y = full_data, by = "GEOID")
+
+map_pa2 %>%
+  ggplot(aes(fill = Diff_average_14))+  geom_sf()+labs(title = "County life-expectancy difference to state average", subtitle = "Darker represents a lower life expectancy than average", caption="Produced by PSU-Administrative Data Accelerator",fill="")
+
+map_pa2 %>%
+  ggplot(aes(fill =Life_exp_14))+  geom_sf()+labs(title = "County level life-expectancy", subtitle = "Darker represents a lower life expectancy than average", caption="Produced by PSU-Administrative Data Accelerator",fill="")
+
+```
